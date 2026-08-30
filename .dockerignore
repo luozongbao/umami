@@ -1,0 +1,20 @@
+# Reduce build context.  This repo uses prebuilt images (no `docker build`),
+# but a small context is still a good idea in case anyone adds a custom image.
+.git
+.gitignore
+.dockerignore
+.env
+.env.*
+!.env.example
+README.md
+RELEASE.md
+node_modules
+npm-debug.log
+*.log
+.vscode
+.idea
+.DS_Store
+backups
+*.sql.gz
+*.tar.gz
+umami-db-data

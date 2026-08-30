@@ -1,0 +1,135 @@
+# Umami web analytics — production deployment
+#
+# Topology (this host):
+#   - Public internet -> nginx (80/443) -> /umami/  -> umami:3000 (internal only)
+#   - umami -> umami-db (postgres) on private docker network
+#
+# Notes:
+#   * Umami listens ONLY on the internal docker network (no host port).
+#   * The existing nginx (container "nginx" on brk-network) reverse-proxies
+#     traffic to Umami via the network alias "umami" (see README).
+#   * PostgreSQL is chosen because Umami's official image only ships
+#     with the postgresql driver (DATABASE_TYPE=postgresql). MariaDB/MySQL
+#     would require a custom build.
+
+name: umami
+
+# -------------------------------------------------------------------
+# Shared defaults — applied to every service unless overridden.
+# -------------------------------------------------------------------
+x-umami-defaults: &umami-defaults
+  restart: unless-stopped
+  init: true
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  # -----------------------------------------------------------------
+  # PostgreSQL — Umami's database (separate from the existing
+  # MariaDB used by the WordPress site).
+  # -----------------------------------------------------------------
+  umami-db:
+    <<: *umami-defaults
+    image: postgres:16-alpine
+    container_name: umami-db
+    hostname: umami-db
+    environment:
+      POSTGRES_DB: ${UMAMI_DB_NAME:-umami}
+      POSTGRES_USER: ${UMAMI_DB_USER:-umami}
+      POSTGRES_PASSWORD: ${UMAMI_DB_PASSWORD:?Set UMAMI_DB_PASSWORD in .env}
+      # UTC is required for correct event timestamps.
+      TZ: UTC
+      PGTZ: UTC
+    volumes:
+      - umami-db-data:/var/lib/postgresql/data
+    networks:
+      - umami-net
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"'
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    # No host port — only reachable via the internal docker network.
+    security_opt:
+      - no-new-privileges:true
+
+  # -----------------------------------------------------------------
+  # Umami application server.
+  # -----------------------------------------------------------------
+  umami:
+    <<: *umami-defaults
+    image: ghcr.io/umami-software/umami:postgresql-latest
+    container_name: umami
+    hostname: umami
+    environment:
+      # DATABASE_TYPE is a build-time variable but is also harmless
+      # (and explicit) when set at runtime for the official images.
+      DATABASE_TYPE: postgresql
+      DATABASE_URL:
+        postgresql://${UMAMI_DB_USER:-umami}:${UMAMI_DB_PASSWORD:?Set UMAMI_DB_PASSWORD in .env}@umami-db:5432/${UMAMI_DB_NAME:-umami}
+
+      # Secrets — generate your own. See README.md.
+      APP_SECRET: ${UMAMI_APP_SECRET:?Set UMAMI_APP_SECRET in .env}
+      TWO_FACTOR_ENCRYPTION_KEY: ${UMAMI_TWO_FACTOR_ENCRYPTION_KEY:?Set UMAMI_TWO_FACTOR_ENCRYPTION_KEY in .env}
+
+      # Serve under /umami/  (nginx is configured to strip & re-add this prefix).
+      BASE_PATH: /umami
+
+      # Trust the real client IP forwarded by nginx (RFC 7239).
+      CLIENT_IP_HEADER: X-Forwarded-For
+
+      # Disable outbound telemetry — pure self-hosted.
+      DISABLE_TELEMETRY: 1
+      DISABLE_UPDATES: 1
+
+      # Container timezone.
+      TZ: UTC
+    networks:
+      # Join both networks:
+      #  - umami-net   : private network to talk to umami-db
+      #  - brk-network : existing network where nginx lives, so the
+      #                  reverse proxy can reach us at http://umami:3000
+      - umami-net
+      - brk-network
+    depends_on:
+      umami-db:
+        condition: service_healthy
+    # No host port — nginx reaches us on the docker network.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'wget -qO- http://localhost:3000/api/heartbeat || exit 1'
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    security_opt:
+      - no-new-privileges:true
+
+# -------------------------------------------------------------------
+# Networks
+# -------------------------------------------------------------------
+networks:
+  # New isolated network for umami <-> db traffic.
+  umami-net:
+    driver: bridge
+    name: umami-net
+  # Attach to the existing network so nginx can reverse-proxy us.
+  # Using `external: true` and the network's existing name means
+  # docker compose will NOT try to create or remove it.
+  brk-network:
+    external: true
+    name: wwwbanrimkwaecom_brk-network
+
+# -------------------------------------------------------------------
+# Volumes
+# -------------------------------------------------------------------
+volumes:
+  umami-db-data:
+    name: umami-db-data

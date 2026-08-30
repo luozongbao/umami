@@ -1,0 +1,50 @@
+# --- Local environment & secrets -------------------------------------------------
+# Never commit the actual .env — it contains database passwords and
+# application secrets.  Commit .env.example instead.
+.env
+.env.*
+!.env.example
+
+# --- Docker --------------------------------------------------------------------
+# docker compose produces these on first run; safe to ignore.
+docker-compose.override.yml
+*.compose.local.yml
+
+# --- Logs -----------------------------------------------------------------------
+*.log
+logs/
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --- OS noise -------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Editors --------------------------------------------------------------------
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.swp
+*.swo
+*~
+
+# --- Node / build artefacts (only if you ever build Umami from source) -----------
+node_modules/
+.next/
+.turbo/
+dist/
+build/
+coverage/
+.cache/
+
+# --- Backups --------------------------------------------------------------------
+backups/
+*.sql.gz
+*.tar.gz
+
+# --- Volumes / state dumped into the repo by accident --------------------------
+umami-db-data/
