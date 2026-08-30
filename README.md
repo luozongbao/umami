@@ -25,15 +25,61 @@ existing production site (`wwwbanrimkwaecom_brk-network`).
 | Constraint on this server | What we did |
 | --- | --- |
 | UFW blocks most inbound ports (default deny). | Umami is **not** published to the host. Only the existing nginx on ports 80/443 is public. |
-| Host ports 80/443 already used by the existing nginx. | Umami listens only on the internal docker network; nginx reverse-proxies `/umami/*` to it. |
+| Host ports 80/443 already used by the existing nginx. | Umami listens only on the internal docker network; nginx reverse-proxies to it. |
 | An existing MariaDB (`db` container) is used by the WordPress site. | Umami gets its **own** PostgreSQL container so the two apps cannot affect each other. |
 | Cloudflare fronts the existing domain. | `CLIENT_IP_HEADER=X-Forwarded-For` and `set_real_ip_from` in nginx preserve the real visitor IP. |
+| Same Umami instance serves analytics for **multiple other websites**. | One Umami container tracks any number of sites (configured in the Umami UI). The dashboard itself can also be exposed under multiple hostnames via nginx vhosts — see [Hosting patterns](#hosting-patterns). |
 
 > **Note on the database choice** — the official Umami Docker image only
 > ships with the PostgreSQL driver (`DATABASE_TYPE=postgresql`). Using
 > MariaDB/MySQL would require building a custom image. PostgreSQL is the
 > officially supported database, has zero compatibility quirks, and is
 > already what Umami is tested against.
+
+---
+
+## Hosting patterns
+
+You can reuse this single Umami instance for as many websites as you want.
+There are **two layers** of "many":
+
+1. **Tracking many sites** (always supported) — every site you want to
+   track is added inside Umami's dashboard, then you paste its tracker
+   `<script>` into that site. See [Embedding the tracker on a website](#embedding-the-tracker-on-a-website).
+2. **Exposing the Umami dashboard under many hostnames** (this section) —
+   pick **one** of the two patterns below. Both serve the same Umami
+   container; only the nginx vhost changes.
+
+| Pattern | `UMAMI_BASE_PATH` | Public URL | Best when |
+| --- | --- | --- | --- |
+| **A — Same domain, sub-path** *(default)* | `/umami` | `https://www.banrimkwae.com/umami/` | Tracked sites and dashboard share a domain (simplest, no third-party cookies). |
+| **B — Dedicated subdomain** | `/` | `https://analytics.example.com/` | Tracked sites live on **different** domains and you want one central analytics URL. |
+
+> **Pick one pattern.** Mixing `/umami` on one vhost and `/` on another
+> against the same Umami container breaks the `BASE_PATH` invariant —
+> stick to one pattern per container.
+
+### Pattern A — Same domain, sub-path (default)
+
+Already wired up by `UMAMI_BASE_PATH=/umami` in `.env.example`. Drop the
+[snippet A](#snippet-for-pattern-a--same-domain-sub-path) into the
+existing `server { }` block for each domain that should host the
+dashboard. Every site you add in Umami's UI can still live on its own
+domain — only the **dashboard URL** is path-based.
+
+### Pattern B — Dedicated subdomain
+
+1. In `.env`, change `UMAMI_BASE_PATH=/` and recreate the umami container:
+   ```bash
+   sed -i 's|^UMAMI_BASE_PATH=.*|UMAMI_BASE_PATH=/|' .env
+   docker compose up -d --force-recreate umami
+   ```
+2. Add a new vhost in nginx for `analytics.example.com` (point DNS at
+   the same server, see [snippet B](#snippet-for-pattern-b--dedicated-subdomain)).
+3. Tracker scripts embedded on every tracked site now point at the
+   analytics subdomain, e.g.
+   `<script src="https://analytics.example.com/script.js" …></script>`.
+   The `data-website-id` still identifies each site.
 
 ---
 
@@ -107,24 +153,26 @@ On first start, Umami automatically creates its tables inside
 ## Reverse-proxying with the existing nginx
 
 The existing `nginx` container serves `www.banrimkwae.com` and
-`banrimkwae.com`. Add a new location block to its config so traffic
-for `/umami/` (and `/umami-api/` if you choose) is forwarded to the
-Umami container on the docker network.
+`banrimkwae.com`. Add **one of the two snippets below** to expose the
+Umami dashboard.
 
-This repo assumes you serve Umami under the **`/umami/`** subpath — that
-matches `BASE_PATH=/umami` already set in `docker-compose.yml`. If you
-prefer a dedicated subdomain (e.g. `analytics.example.com`), drop the
-`BASE_PATH` from `docker-compose.yml` and remove the `/umami/` prefix
-from the nginx snippet.
+> Both snippets assume nginx can resolve the docker hostname
+> `umami` — it does, because the `nginx` container is on
+> `wwwbanrimkwaecom_brk-network`, which our `docker-compose.yml`
+> joins as an external network.
 
-### Snippet for the existing nginx config
+### Snippet for Pattern A — same domain, sub-path
+
+Drop into **every** `server { }` block that should host the dashboard
+(typically just the `www.banrimkwae.com` vhost).
 
 ```nginx
-# /etc/nginx/conf.d/default.conf (inside the existing server { } block)
+# /etc/nginx/conf.d/default.conf (inside the server { } block for www.banrimkwae.com)
 
-# ---- Umami analytics ----
+# ---- Umami analytics (sub-path) ----
+# BASE_PATH=/umami  in .env  ⇒  dashboard at https://<host>/umami/
 location /umami/ {
-    proxy_pass         http://umami:3000/;          # "umami" is the container hostname
+    proxy_pass         http://umami:3000/;
     proxy_http_version 1.1;
     proxy_set_header   Host              $host;
     proxy_set_header   X-Real-IP         $remote_addr;
@@ -133,16 +181,13 @@ location /umami/ {
     proxy_set_header   X-Forwarded-Host  $host;
     proxy_set_header   X-Forwarded-Port  $server_port;
 
-    # Long-lived socket for the live dashboard.
     proxy_read_timeout 300s;
     proxy_send_timeout 300s;
-
-    # The Umami image's internal Next.js server needs the original
-    # Host so the BASE_PATH redirect works correctly.
     proxy_redirect     off;
 }
 
-# The Umami tracker script (loaded by visitors' browsers).
+# Tracker script (loaded by visitors of every tracked site).
+# If you set UMAMI_TRACKER_SCRIPT_NAME=stats.js, change both URLs below.
 location = /umami/script.js {
     proxy_pass http://umami:3000/script.js;
     proxy_set_header Host $host;
@@ -150,7 +195,7 @@ location = /umami/script.js {
     add_header Cache-Control "public, max-age=3600";
 }
 
-# Heartbeat / static assets that don't go through Next.js rewrites.
+# Static assets & API routes — Next.js rewrites.
 location ~ ^/umami/(api|_next|static|favicons|images)/ {
     proxy_pass http://umami:3000;
     proxy_set_header Host $host;
@@ -158,47 +203,143 @@ location ~ ^/umami/(api|_next|static|favicons|images)/ {
 }
 ```
 
-After editing, reload nginx **inside its container**:
+To expose the dashboard on **multiple existing domains**, repeat the
+three blocks inside each vhost (e.g. one for `www.banrimkwae.com`,
+one for `banrimkwae.com`). The Umami container itself doesn't care
+which host served the request — only the browser's tracker script
+needs to load from the same domain as the tracked page.
+
+### Snippet for Pattern B — dedicated subdomain
+
+1. Point `analytics.example.com` DNS at this server (A/AAAA record).
+2. Set `UMAMI_BASE_PATH=/` in `.env` and recreate the umami container:
+   ```bash
+   sed -i 's|^UMAMI_BASE_PATH=.*|UMAMI_BASE_PATH=/|' .env
+   docker compose up -d --force-recreate umami
+   ```
+3. Add a new file in `/etc/nginx/conf.d/` (e.g. `umami.conf`):
+
+```nginx
+# /etc/nginx/conf.d/umami.conf
+# Dedicated subdomain vhost for the Umami dashboard.
+server {
+    listen      80;
+    listen [::]:80;
+    server_name analytics.example.com;
+
+    # Reuse the same Cloudflare trust block you already have elsewhere
+    # (set_real_ip_from / real_ip_header CF-Connecting-IP).
+    # … paste the same lines here …
+
+    location / {
+        proxy_pass         http://umami:3000;
+        proxy_http_version 1.1;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_set_header   X-Forwarded-Host  $host;
+        proxy_set_header   X-Forwarded-Port  $server_port;
+
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+        proxy_redirect     off;
+    }
+}
+```
+
+Add an HTTPS server block the same way (or use a separate file with
+`listen 443 ssl http2;` plus your existing cert paths) once a cert is
+issued for `analytics.example.com`.
+
+### Trusting Cloudflare's real client IP (already in your existing config)
+
+Your existing nginx config already has `set_real_ip_from` lines for
+the Cloudflare IP ranges and `real_ip_header CF-Connecting-IP;`. Copy
+those lines into the new Pattern B vhost (snippet above) so visitor
+IPs are preserved there too.
+
+After editing any nginx file, validate and reload **inside** the
+nginx container:
 
 ```bash
 docker exec nginx nginx -t            # validate config
 docker exec nginx nginx -s reload     # apply
 ```
 
-> **Where the snippet goes:** the snippet above belongs inside the
-> existing `server { listen 80; server_name www.banrimkwae.com ...; }`
-> block of `/etc/nginx/conf.d/default.conf` inside the `nginx`
-> container. If you have multiple `server { }` blocks (e.g. one per
-> site), put it in the one that matches `www.banrimkwae.com`.
-
-### Trusting Cloudflare's real client IP (already in your existing config)
-
-Your existing nginx config already has `set_real_ip_from` lines for
-the Cloudflare IP ranges and `real_ip_header CF-Connecting-IP;`. No
-changes are needed — Umami will receive the visitor's true IP in
-`X-Forwarded-For`.
-
 ---
 
 ## Embedding the tracker on a website
 
-1. Log in to Umami at `https://www.banrimkwae.com/umami/`.
+1. Log in to Umami (Pattern A: `https://www.banrimkwae.com/umami/` —
+   Pattern B: `https://analytics.example.com/`).
 2. *Settings* → *Websites* → *Add website*.
-3. Copy the **Tracker code** Umami gives you. For a site served over
-   HTTPS, it looks like:
+3. Copy the **Tracker code** Umami gives you.
 
+   **Pattern A — sub-path on the same domain as the tracked site:**
    ```html
    <script async defer
            data-website-id="YOUR-WEBSITE-ID"
            src="https://www.banrimkwae.com/umami/script.js"></script>
    ```
 
+   **Pattern B — dedicated analytics subdomain** (works for tracked
+   sites on *any* domain):
+   ```html
+   <script async defer
+           data-website-id="YOUR-WEBSITE-ID"
+           src="https://analytics.example.com/script.js"></script>
+   ```
+
 4. Paste it into the `<head>` of every page you want to track.
 
-### Tracking multiple sites
+### Tracking many sites from one Umami instance
 
-Add a new website in Umami for each domain and use its own
-`data-website-id`. The tracker script is shared.
+A single Umami container can collect analytics for **any number of
+websites**, on any number of domains. The procedure is identical for
+each:
+
+1. *Settings* → *Websites* → *Add website* (give it a name + the
+   site's domain).
+2. Copy the tracker `<script>` Umami generates — only the
+   `data-website-id` differs per site.
+3. Paste it into the target site's `<head>`.
+4. (Optional) Create **teams** under *Settings* → *Teams* so different
+   clients only see their own site's stats.
+
+> **CORS / ad-blocker note:** Pattern A keeps the tracker on the same
+> origin as the tracked site, so no CORS configuration is needed.
+> Pattern B requires the analytics subdomain to send
+> `Access-Control-Allow-Origin: *` for the `/api/send` endpoint;
+> Umami's `ghcr.io/umami-software/umami:postgresql-latest` image
+> already sets this header, so no extra config is required.
+> If you renamed the script via `UMAMI_TRACKER_SCRIPT_NAME`, see the
+> `UMAMI_TRACKER_SCRIPT_NAME` note below.
+
+### Renaming the tracker script (optional)
+
+Ad-blockers often block `script.js`. To dodge that, set in `.env`:
+
+```
+UMAMI_TRACKER_SCRIPT_NAME=stats.js
+```
+
+Then update every tracker `<script src="…">` on every tracked site
+from `…/script.js` to `…/stats.js`, **and** if you're on Pattern A,
+add one more nginx location inside each vhost that hosts the
+dashboard:
+
+```nginx
+location = /umami/stats.js {
+    proxy_pass http://umami:3000/stats.js;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    add_header Cache-Control "public, max-age=3600";
+}
+```
+
+Pattern B requires no nginx change because the generic `location /`
+already proxies everything.
 
 ---
 
@@ -281,8 +422,8 @@ is safe.
 
 | File | Purpose |
 | --- | --- |
-| `docker-compose.yml` | Umami app + Postgres DB, attached to the existing brk-network. |
-| `.env.example` | Template — copy to `.env` and fill in real secrets. |
+| `docker-compose.yml` | Umami app + Postgres DB, attached to the existing brk-network. `BASE_PATH`, `TRACKER_SCRIPT_NAME` and `ALLOWED_FRAME_URLS` are env-driven so the same compose file serves any hosting pattern. |
+| `.env.example` | Template — copy to `.env` and fill in real secrets and the chosen hosting-pattern knobs. |
 | `.gitignore` / `.dockerignore` | Keep secrets and noise out of git and out of build context. |
 | `RELEASE.md` | Notes for each deployed version. |
 
