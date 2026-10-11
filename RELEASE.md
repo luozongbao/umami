@@ -6,6 +6,53 @@ versions follow the tracked Umami upstream version we pin to.
 
 ---
 
+## [1.1.0] — 2026-08-30 — Multi-website / multi-domain support
+
+### Added
+
+- `UMAMI_BASE_PATH` env var (`/umami` by default) — choose between:
+  - **Pattern A** `/umami` — sub-path on the same domain as a tracked site
+    (e.g. `https://www.banrimkwae.com/umami/`).
+  - **Pattern B** `/` — apex of a dedicated analytics subdomain
+    (e.g. `https://analytics.example.com/`).
+- `UMAMI_TRACKER_SCRIPT_NAME` env var — rename the tracker script
+  (e.g. `stats.js`) to bypass ad-blockers; works with both hosting
+  patterns.
+- `UMAMI_ALLOWED_FRAME_URLS` env var — space-separated hostnames that
+  may iframe the Umami dashboard (e.g. an admin panel hosted on
+  another domain).
+- README section **Hosting patterns** with full nginx snippets for
+  both Pattern A and Pattern B.
+- README guidance on adding many websites inside one Umami instance
+  (per-site `data-website-id`, optional Teams for multi-tenant
+  isolation).
+
+### Changed
+
+- `BASE_PATH` in `docker-compose.yml` is now env-driven
+  (`${UMAMI_BASE_PATH:-/umami}`) instead of hard-coded.
+- Tracker section in README rewritten to show both hosting patterns
+  and explain how to rename the tracker script consistently across
+  nginx + tracked sites.
+
+### Backwards compatibility
+
+- Existing deployments keep working without changes: the default
+  `UMAMI_BASE_PATH=/umami` matches the previous hard-coded value.
+- No DB migration needed; no volume changes.
+
+### Known limitations
+
+- One Umami container supports **one** `BASE_PATH` at a time. To
+  serve `/umami` on one vhost and `/` on another against the same
+  container would break Next.js's internal redirects — pick one
+  pattern per deployment.
+- Renaming the tracker script (`UMAMI_TRACKER_SCRIPT_NAME`) under
+  Pattern A requires an extra `location = /umami/<name>` block per
+  vhost; Pattern B requires none.
+
+---
+
 ## [1.0.0] — 2026-08-30 — Initial production deployment
 
 ### Added

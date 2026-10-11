@@ -4,6 +4,14 @@
 #   - Public internet -> nginx (80/443) -> /umami/  -> umami:3000 (internal only)
 #   - umami -> umami-db (postgres) on private docker network
 #
+# This single Umami instance can:
+#   * Track visitor analytics for ANY number of sites (configure in Umami UI).
+#   * Be exposed under multiple public hostnames, in two patterns:
+#       (A) Sub-path on the same domain as a tracked site (e.g.
+#           https://www.banrimkwae.com/umami/) — set BASE_PATH=/umami
+#       (B) Dedicated subdomain (e.g. https://analytics.example.com/) — set BASE_PATH=/
+#     See README.md → "Reverse-proxying with the existing nginx".
+#
 # Notes:
 #   * Umami listens ONLY on the internal docker network (no host port).
 #   * The existing nginx (container "nginx" on brk-network) reverse-proxies
@@ -78,11 +86,25 @@ services:
       APP_SECRET: ${UMAMI_APP_SECRET:?Set UMAMI_APP_SECRET in .env}
       TWO_FACTOR_ENCRYPTION_KEY: ${UMAMI_TWO_FACTOR_ENCRYPTION_KEY:?Set UMAMI_TWO_FACTOR_ENCRYPTION_KEY in .env}
 
-      # Serve under /umami/  (nginx is configured to strip & re-add this prefix).
-      BASE_PATH: /umami
+      # Public URL prefix — must match the nginx `location` block that
+      # reverse-proxies to this container.  Examples:
+      #   "/umami"   — sub-path on the SAME domain as a tracked site
+      #                (e.g. https://www.banrimkwae.com/umami/)
+      #   "/"        — apex of a dedicated subdomain
+      #                (e.g. https://analytics.example.com/)
+      BASE_PATH: ${UMAMI_BASE_PATH:-/umami}
+
+      # Optional: rename the tracker script to bypass ad-blockers.
+      # Must match the `<script src="...">` you embed on each tracked site.
+      TRACKER_SCRIPT_NAME: ${UMAMI_TRACKER_SCRIPT_NAME:-}
 
       # Trust the real client IP forwarded by nginx (RFC 7239).
       CLIENT_IP_HEADER: X-Forwarded-For
+
+      # Comma-separated list of hostnames that are allowed to embed this
+      # Umami dashboard in an iframe.  Useful for embedding stats into
+      # an admin panel hosted on another domain.  Empty = no iframe embedding.
+      ALLOWED_FRAME_URLS: ${UMAMI_ALLOWED_FRAME_URLS:-}
 
       # Disable outbound telemetry — pure self-hosted.
       DISABLE_TELEMETRY: 1
