@@ -12,7 +12,7 @@ versions follow the tracked Umami upstream version we pin to.
 
 - `UMAMI_BASE_PATH` env var (`/umami` by default) — choose between:
   - **Pattern A** `/umami` — sub-path on the same domain as a tracked site
-    (e.g. `https://www.banrimkwae.com/umami/`).
+    (e.g. `https://www.example.com/umami/`).
   - **Pattern B** `/` — apex of a dedicated analytics subdomain
     (e.g. `https://analytics.example.com/`).
 - `UMAMI_TRACKER_SCRIPT_NAME` env var — rename the tracker script
@@ -62,10 +62,10 @@ versions follow the tracked Umami upstream version we pin to.
   - `umami-db` from `postgres:16-alpine`
 - Internal-only networking — Umami is **not** published to host ports.
   Reachable only via the existing `nginx` container over the
-  pre-existing `wwwbanrimkwaecom_brk-network` docker network
+  pre-existing `app-network` docker network
   (declared `external: true` in compose).
 - `BASE_PATH=/umami` so Umami is served under the `/umami/` URL prefix
-  on `www.banrimkwae.com` (no new public port needed; UFW-safe).
+  on `www.example.com` (no new public port needed; UFW-safe).
 - `CLIENT_IP_HEADER=X-Forwarded-For` + nginx `set_real_ip_from`
   block preserve the real visitor IP behind Cloudflare.
 - Healthchecks on both containers (`pg_isready`, `/api/heartbeat`).
@@ -115,7 +115,7 @@ versions follow the tracked Umami upstream version we pin to.
 
 ### Known limitations
 
-- The compose file attaches to `wwwbanrimkwaecom_brk-network` via
+- The compose file attaches to `app-network` via
   `external: true`. If you ever rebuild the host, recreate that
   network first or `docker compose up` will fail with
   `network ... not found`.

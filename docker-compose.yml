@@ -89,9 +89,9 @@ services:
       # Public URL prefix — must match the nginx `location` block that
       # reverse-proxies to this container.  Examples:
       #   "/umami"   — sub-path on the SAME domain as a tracked site
-      #                (e.g. https://www.banrimkwae.com/umami/)
+      #                (e.g. https://www.example.com/umami/)
       #   "/"        — apex of a dedicated subdomain
-      #                (e.g. https://analytics.example.com/)
+      #                (e.g. https://umami.example.com/)
       BASE_PATH: ${UMAMI_BASE_PATH:-/umami}
 
       # Optional: rename the tracker script to bypass ad-blockers.
@@ -147,7 +147,7 @@ networks:
   # docker compose will NOT try to create or remove it.
   brk-network:
     external: true
-    name: wwwbanrimkwaecom_brk-network
+    name: app-network
 
 # -------------------------------------------------------------------
 # Volumes

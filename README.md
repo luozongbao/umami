@@ -1,7 +1,7 @@
 # Umami — Self-Hosted Web Analytics
 
 Privacy-first web analytics, deployed with Docker Compose alongside the
-existing production site (`wwwbanrimkwaecom_brk-network`).
+existing production site (`app-network`).
 
 ---
 
@@ -52,7 +52,7 @@ There are **two layers** of "many":
 
 | Pattern | `UMAMI_BASE_PATH` | Public URL | Best when |
 | --- | --- | --- | --- |
-| **A — Same domain, sub-path** *(default)* | `/umami` | `https://www.banrimkwae.com/umami/` | Tracked sites and dashboard share a domain (simplest, no third-party cookies). |
+| **A — Same domain, sub-path** *(default)* | `/umami` | `https://www.example.com/umami/` | Tracked sites and dashboard share a domain (simplest, no third-party cookies). |
 | **B — Dedicated subdomain** | `/` | `https://analytics.example.com/` | Tracked sites live on **different** domains and you want one central analytics URL. |
 
 > **Pick one pattern.** Mixing `/umami` on one vhost and `/` on another
@@ -94,10 +94,10 @@ Cloudflare
    ▼
 nginx  (host ports 80/443, container "nginx")
    │   location /umami/  ──►  http://umami:3000/
-   │   (also serves your existing www.banrimkwae.com)
+   │   (also serves your existing www.example.com)
    ▼
 ┌──────────────────────────────────────────────────────────────┐
-│ Docker network: wwwbanrimkwaecom_brk-network (external)      │
+│ Docker network: app-network (external)                      │
 │                                                              │
 │   ┌─────────────┐         ┌──────────────────────────────┐  │
 │   │   umami     │ ──────► │          umami-db            │  │
@@ -114,7 +114,7 @@ nginx  (host ports 80/443, container "nginx")
 
 - Docker Engine ≥ 24 and `docker compose` v2.
 - Ability to edit the existing nginx container's config (for the reverse-proxy block).
-- The existing `wwwbanrimkwaecom_brk-network` docker network must exist (it already does on this host).
+- The existing `app-network` docker network must exist (it already does on this host).
 
 ---
 
@@ -152,22 +152,22 @@ On first start, Umami automatically creates its tables inside
 
 ## Reverse-proxying with the existing nginx
 
-The existing `nginx` container serves `www.banrimkwae.com` and
-`banrimkwae.com`. Add **one of the two snippets below** to expose the
+The existing `nginx` container serves `www.example.com` and
+`example.com`. Add **one of the two snippets below** to expose the
 Umami dashboard.
 
 > Both snippets assume nginx can resolve the docker hostname
 > `umami` — it does, because the `nginx` container is on
-> `wwwbanrimkwaecom_brk-network`, which our `docker-compose.yml`
+> `app-network`, which our `docker-compose.yml`
 > joins as an external network.
 
 ### Snippet for Pattern A — same domain, sub-path
 
 Drop into **every** `server { }` block that should host the dashboard
-(typically just the `www.banrimkwae.com` vhost).
+(typically just the `www.example.com` vhost).
 
 ```nginx
-# /etc/nginx/conf.d/default.conf (inside the server { } block for www.banrimkwae.com)
+# /etc/nginx/conf.d/default.conf (inside the server { } block for www.example.com)
 
 # ---- Umami analytics (sub-path) ----
 # BASE_PATH=/umami  in .env  ⇒  dashboard at https://<host>/umami/
@@ -204,8 +204,8 @@ location ~ ^/umami/(api|_next|static|favicons|images)/ {
 ```
 
 To expose the dashboard on **multiple existing domains**, repeat the
-three blocks inside each vhost (e.g. one for `www.banrimkwae.com`,
-one for `banrimkwae.com`). The Umami container itself doesn't care
+three blocks inside each vhost (e.g. one for `www.example.com`,
+one for `example.com`). The Umami container itself doesn't care
 which host served the request — only the browser's tracker script
 needs to load from the same domain as the tracked page.
 
@@ -271,7 +271,7 @@ docker exec nginx nginx -s reload     # apply
 
 ## Embedding the tracker on a website
 
-1. Log in to Umami (Pattern A: `https://www.banrimkwae.com/umami/` —
+1. Log in to Umami (Pattern A: `https://www.example.com/umami/` —
    Pattern B: `https://analytics.example.com/`).
 2. *Settings* → *Websites* → *Add website*.
 3. Copy the **Tracker code** Umami gives you.
@@ -280,7 +280,7 @@ docker exec nginx nginx -s reload     # apply
    ```html
    <script async defer
            data-website-id="YOUR-WEBSITE-ID"
-           src="https://www.banrimkwae.com/umami/script.js"></script>
+           src="https://www.example.com/umami/script.js"></script>
    ```
 
    **Pattern B — dedicated analytics subdomain** (works for tracked
@@ -409,7 +409,7 @@ is safe.
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| `docker compose up` says network `wwwbanrimkwaecom_brk-network` not found | Compose file declares it `external: true` but the network is missing. | `docker network create wwwbanrimkwaecom_brk-network` (or restore the network from your site setup). |
+| `docker compose up` says network `app-network` not found | Compose file declares it `external: true` but the network is missing. | `docker network create app-network` (or restore the network from your site setup). |
 | `Umami login page 502` after editing nginx | Snippet is in the wrong `server { }` block, or `nginx -s reload` was skipped. | `docker exec nginx nginx -t`, fix the path, then reload. |
 | All visitors show the same IP (e.g. your server's IP) | `real_ip_header` / `set_real_ip_from` lines for Cloudflare are missing in nginx. | Make sure the existing Cloudflare trust list is **above** the new `/umami/` block. |
 | Umami can't connect to DB on first boot | `.env` was edited after the first run; password mismatch. | `docker compose logs umami-db` then `docker compose down -v && docker compose up -d` (⚠️ wipes DB). |
@@ -422,7 +422,7 @@ is safe.
 
 | File | Purpose |
 | --- | --- |
-| `docker-compose.yml` | Umami app + Postgres DB, attached to the existing brk-network. `BASE_PATH`, `TRACKER_SCRIPT_NAME` and `ALLOWED_FRAME_URLS` are env-driven so the same compose file serves any hosting pattern. |
+| `docker-compose.yml` | Umami app + Postgres DB, attached to the existing app-network. `BASE_PATH`, `TRACKER_SCRIPT_NAME` and `ALLOWED_FRAME_URLS` are env-driven so the same compose file serves any hosting pattern. |
 | `.env.example` | Template — copy to `.env` and fill in real secrets and the chosen hosting-pattern knobs. |
 | `.gitignore` / `.dockerignore` | Keep secrets and noise out of git and out of build context. |
 | `RELEASE.md` | Notes for each deployed version. |
